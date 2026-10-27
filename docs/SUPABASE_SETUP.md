@@ -1,5 +1,9 @@
 # Free backend setup
 
+If an existing app account's password is unknown, use the private local
+[password reset helper](PASSWORD_RESET.md). It keeps the same user ID and role;
+no account deletion or APK rebuild is needed.
+
 Already set up the initial database? For the owner Excel import and saved Maps
 links, run `supabase/migrations/20261014_owner_import.sql` once before using the
 updated app. See `docs/OWNER_IMPORT.md`. Do not rerun the initial schema.
@@ -8,6 +12,23 @@ To allow deliveries using a saved Google Maps link without coordinates, also run
 `supabase/migrations/20261015_maps_link_delivery.sql` in the SQL Editor. This updates
 the delivery validation function and keeps existing shops and history. Existing
 links become usable immediately; they do not need to be entered again.
+
+For collections and credit ledgers, next run
+`supabase/migrations/20261016_collections_ledger.sql`. See
+`docs/COLLECTIONS_LEDGER.md` for phone workflows, accounting choices and checks.
+
+For daily cash settlement, then run
+`supabase/migrations/20261017_daily_settlements.sql` once. This adds server day
+locks, driver submissions and owner approval/reopening history. See
+`docs/DAILY_SETTLEMENTS.md` and install the updated APK on every phone.
+
+For the new shop add/edit forms, then run
+`supabase/migrations/20261020_shop_profiles.sql` to persist contact person and PIN
+code. See `docs/SHOP_PROFILES.md` for location capture and device checks.
+
+For owner drag-and-drop delivery ordering, then run
+`supabase/migrations/20261023_delivery_order.sql`. This adds atomic, owner-only
+route saves and ordering history. See `docs/DELIVERY_ORDER.md`; update every phone.
 
 1. Create a Supabase account and a new **Free** project in a suitable region. Keep
    the database password private; it never goes into the APK.

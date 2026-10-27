@@ -1,7 +1,7 @@
 # Prepare deliveries by scanning bills
 
-The owner opens **Overview → Scan shop name**, or **Deliveries → Scan bill to add
-delivery** for a selected date. Tap **Scan whole bill** and photograph one printed
+The owner opens **Assign Delivery → Scan Next Bill** for a selected date.
+Tap **Scan whole bill** and photograph one printed
 English bill, including its **Bill To / customer** section. **Choose a photo** also
 reads an existing image, which is useful in an Android Studio emulator.
 
@@ -13,20 +13,31 @@ excluded. The name stays editable. If more than one plausible name is detected,
 the owner can choose a name chip. Matching runs in a background isolate against
 the downloaded directory, including directories with 600+ shops.
 
-A unique exact name match opens a **Shop found** card showing the saved address
-and GPS. Similar names and same-name branches remain separate choices. Review the
+A unique exact name match opens a **Matched with Registered Shop** card showing
+the saved address, contact and location status. Similar names and same-name
+branches remain separate choices. Review the
 shop and entrance, optionally preview its pin in Google Maps, choose the delivery
-person and tap **Confirm shop & add delivery**. An assignment is never made merely
-by scanning. **Scan next shop** continues the same date and delivery person; **View
+person and tap **Confirm Dispatch**. An assignment is never made merely
+by scanning. **Scan Next Bill** continues the same date and delivery person; **View
 delivery list** returns to the owner's list. Maps-link delivery requires the
 database update described below for existing Supabase projects.
 
 When the shop is missing, tap **Add new shop** directly in the scan result. The
-shop form opens with the detected name filled in. **Area** and other details are
-optional; a missing area is saved as **Area not set**. Tap **Save** in the app bar
-to return to the same scan/delivery flow. The new shop is selected, and any missing
+shop form opens with the detected name filled in. Name, contact person, mobile,
+street address and PIN are required; area, landmark, notes and photo are optional.
+A missing area is saved as **Area not set**. Use **Save & Add to Directory** in the
+fixed footer to return to the same scan/delivery flow. The new shop is selected, and any missing
 location can be supplied as a Maps link or verified entrance coordinates. Cancelling the shop form leaves
 the scanned name available.
+
+**Direct Live GPS Pin** opens that same form and starts real GPS capture. Use it
+at the shop entrance, review the address/contact fields and explicitly confirm the
+pin. Capture alone saves neither a new shop nor an assignment. Cancel discards
+the unsaved form. No driver notification is sent by capturing GPS.
+
+The supplied dispatch design is implemented in Flutter; see
+`docs/DISPATCH_DESIGN.md`. Scanning still extracts only the shop name. Carton
+counts, bill numbers/amounts and addresses are not inferred or shown as OCR output.
 
 ## When the bill or shop is unclear
 
@@ -43,8 +54,9 @@ the scanned name available.
 - A saved Google Maps link counts as a delivery location, including short share
   links and links whose GPS cannot be extracted. The result shows **Ready for
   delivery** and **View location in Maps**; it does not show a missing-location
-  warning. Coordinates are optional. Without a link, captured/manual coordinates
-  need entrance verification. A written address alone is not automatically geocoded.
+  warning. Without a link, a captured GPS pin needs entrance verification.
+  The shop form has no manual latitude/longitude inputs. A written address alone
+  is not automatically geocoded.
 - Existing Supabase projects need
   `supabase/migrations/20261015_maps_link_delivery.sql` after the owner-import
   migration to enable Maps-link deliveries on the server. Do not rerun the schema.

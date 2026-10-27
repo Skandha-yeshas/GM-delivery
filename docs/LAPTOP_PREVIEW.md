@@ -6,9 +6,36 @@ Open `preview/index.html` in Chrome or Edge. It displays the real Flutter screen
 at the 390 × 844 phone aspect ratio. Use the screen selector to switch views.
 These are static captures with illustrative data, not an interactive Android emulator.
 
-The updated viewer includes the owner overview, whole-bill scan, shop-name result,
+The updated viewer includes the shop directory, whole-bill scan, shop-name result,
 missing-shop addition and Maps-link-only location screens. These use the actual Flutter widgets and theme;
 sample directory and OCR output are used only for the screenshots.
+
+The collections milestone also includes illustrative **Collection entry**, **Shop
+credit ledger** and **Outstanding balances** captures. These never seed phone data.
+
+The settlement milestone adds **Driver cash settlement** and **Owner settlement
+review** captures. Use the receipt icon in the actual app to open daily settlements.
+
+**Add shop**, **Edit shop**, **Shop location & address** and **Delivery entrance &
+navigation** show the new shop-form design using real Flutter widgets and
+illustrative shop/GPS data. Marked fields are required; GPS and Maps links replace
+manual latitude/longitude entry.
+
+**Shop directory** uses the new navy/white contact-card design with alphabetic
+groups; **Directory · A–D filter** shows a working letter filter with real Flutter
+widgets and illustrative records. Owner navigation has All Shops and Assign Delivery;
+settlements and outstanding balances are under the account avatar.
+
+The viewer opens **Driver · shop search**. **Driver · search by contact** shows a
+filtered result; **Driver · saved shop location** shows its location sheet.
+**Driver · assigned route** shows real progress and the owner's sequence.
+**Driver · shop & delivery actions** shows contact, navigation
+and collection controls. Owner accounts in the Android app still open All Shops.
+**Assign Delivery** shows the route-planning
+controls and numbered stops. **Delivery order · drag & save** shows a reordered
+draft and its fixed save/reset bar. **Matched shop · Confirm Dispatch** shows the
+driver selection and real confirmation action; **Add missing shop** shows the
+new-shop/GPS choices. All use actual Flutter widgets with controlled sample data.
 
 You can also open the viewer from the project terminal:
 

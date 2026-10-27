@@ -141,7 +141,7 @@ class _ShopImportScreenState extends State<ShopImportScreen> {
                     ),
                     const SizedBox(height: 8),
                     const Text(
-                      'Use Name and Location columns. Location can be a Google Maps link, address or blank. Optional: Area, Phone, Landmark, Delivery instructions, Latitude, Longitude. Only new shops are added.',
+                      'Use Name and Location columns. Location can be a Google Maps link, address or blank. Optional: Area, Phone, Landmark, Delivery instructions, Latitude, Longitude, Opening balance (in rupees). Shop details are preserved on retry; an existing opening balance is never overwritten.',
                     ),
                     const SizedBox(height: 10),
                     Wrap(

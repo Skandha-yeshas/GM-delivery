@@ -7,6 +7,8 @@ import 'package:gm_delivery/data/local_store.dart';
 import 'package:gm_delivery/domain/models.dart';
 import 'package:gm_delivery/presentation/home_screen.dart';
 import 'package:gm_delivery/presentation/shop_import_screen.dart';
+import 'package:gm_delivery/presentation/settlement_screen.dart';
+import 'package:gm_delivery/presentation/ledger_screen.dart';
 
 void main() {
   setUpAll(sqfliteFfiInit);
@@ -62,13 +64,34 @@ void main() {
         find.text('Saved on this phone only. Sharing is not enabled yet.'),
         findsOneWidget,
       );
-      await tester.tap(find.text('Shops'));
+      await tester.pumpAndSettle();
+      expect(find.byType(NavigationDestination), findsNWidgets(2));
+      expect(find.text('Overview'), findsNothing);
+      expect(
+        tester.widget<NavigationBar>(find.byType(NavigationBar)).selectedIndex,
+        0,
+      );
+      await tester.tap(find.byTooltip('Account and saved records'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Daily settlements'));
+      await tester.pumpAndSettle();
+      expect(find.byType(SettlementsScreen), findsOneWidget);
+      await tester.pageBack();
+      await tester.pumpAndSettle();
+      await tester.tap(find.byTooltip('Account and saved records'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Outstanding balances'));
+      await tester.pumpAndSettle();
+      expect(find.byType(OutstandingScreen), findsOneWidget);
+      await tester.pageBack();
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('All Shops'));
       await tester.pumpAndSettle();
       expect(find.text('Alpha Stationery'), findsOneWidget);
       await tester.enterText(find.byType(TextField), 'Alpha');
       await tester.pump();
       expect(find.text('Beta Stationery'), findsNothing);
-      await tester.tap(find.text('Deliveries'));
+      await tester.tap(find.text('Assign Delivery'));
       await tester.pumpAndSettle();
       await tester.tap(find.text('Prepare delivery list'));
       await tester.pumpAndSettle();
@@ -86,9 +109,19 @@ void main() {
       await tester.runAsync(() async {
         expect((await store.stops()).single.shopId, 'shop-a');
       });
+      await tester.ensureVisible(
+        find.byKey(ValueKey('route-details-${controller.stops.single.id}')),
+      );
+      await Scrollable.ensureVisible(
+        tester.element(find.text('Details & delivery actions')),
+        alignment: .3,
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Details & delivery actions'));
+      await tester.pumpAndSettle();
       expect(find.text('Update result'), findsOneWidget);
       expect(tester.takeException(), isNull);
-      await tester.tap(find.text('Shops'));
+      await tester.tap(find.text('All Shops'));
       await tester.pumpAndSettle();
       await tester.tap(find.text('Import Excel'));
       await tester.pumpAndSettle();
@@ -99,28 +132,30 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.text('Add shop'));
       await tester.pumpAndSettle();
-      await tester.enterText(
-        find.byWidgetPredicate(
-          (w) => w is TextField && w.decoration?.labelText == 'Shop name',
-        ),
-        'Maps Only Shop',
+      Future<void> fill(String label, String value) async {
+        final field = find.descendant(
+          of: find.byKey(ValueKey('shop-field-$label')),
+          matching: find.byType(TextField),
+        );
+        await tester.ensureVisible(field);
+        await tester.pumpAndSettle();
+        await tester.enterText(field, value);
+      }
+
+      await fill('Shop name', 'Maps Only Shop');
+      await fill('Proprietor / contact person', 'Rajesh');
+      await fill('Contact number', '9876543210');
+      await fill('Address', '12 Market Road');
+      await fill('PIN code', '560001');
+      await fill(
+        'Google Maps link (optional)',
+        'https://maps.app.goo.gl/example',
       );
-      await tester.scrollUntilVisible(
-        find.text('Google Maps link (optional)'),
-        350,
-        scrollable: find.byType(Scrollable).first,
-      );
-      final mapField = find.byWidgetPredicate(
-        (w) =>
-            w is TextField &&
-            w.decoration?.labelText == 'Google Maps link (optional)',
-      );
-      await tester.enterText(mapField, 'https://maps.app.goo.gl/example');
       await tester.pumpAndSettle();
       expect(find.text('Maps location ready for delivery'), findsOneWidget);
       expect(find.byType(CheckboxListTile), findsNothing);
       await tester.runAsync(() async {
-        await tester.tap(find.text('Save'));
+        await tester.tap(find.byKey(const Key('save-shop')));
         await controller.whenIdle;
         await Future<void>.delayed(const Duration(milliseconds: 100));
       });
@@ -130,7 +165,7 @@ void main() {
       );
       expect(linked.hasCoordinates, isFalse);
       expect(linked.readyForDelivery, isTrue);
-      await tester.tap(find.text('Deliveries'));
+      await tester.tap(find.text('Assign Delivery'));
       await tester.pumpAndSettle();
       await tester.tap(find.text('Add stops'));
       await tester.pumpAndSettle();

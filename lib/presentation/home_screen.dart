@@ -6,10 +6,17 @@ import '../domain/models.dart';
 import '../domain/maps_location.dart';
 import 'common.dart';
 import 'shop_form.dart';
+import 'shop_directory.dart';
+import 'dispatch_design.dart';
+import 'owner_route_planner.dart';
 import 'shop_import_screen.dart';
 import 'bill_scan_screen.dart';
-import 'owner_dashboard.dart';
-import 'workspace_design.dart';
+import 'driver_delivery_board.dart';
+import 'driver_shop_search.dart';
+import 'collection_form.dart';
+import 'ledger_screen.dart';
+import 'settlement_screen.dart';
+import '../domain/ledger.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key, required this.controller, this.onSignOut});
@@ -21,6 +28,7 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   int _tab = 0;
+  bool _routeDirty = false;
   String _search = '';
   final _shopSearch = TextEditingController();
   String? _area;
@@ -32,7 +40,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   @override
   void initState() {
     super.initState();
-    _tab = c.isOwner ? 2 : 1;
+    _tab = c.isOwner ? 0 : 1;
     WidgetsBinding.instance.addObserver(this);
     _syncTimer = Timer.periodic(const Duration(seconds: 45), (_) {
       if (WidgetsBinding.instance.lifecycleState == AppLifecycleState.resumed &&
@@ -84,186 +92,179 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   @override
   Widget build(BuildContext context) => ListenableBuilder(
     listenable: c,
-    builder: (context, _) => Scaffold(
-      appBar: AppBar(
-        title: Row(
+    builder: (context, _) => Theme(
+      data: DirectoryDesign.theme(Theme.of(context)),
+      child: Scaffold(
+        appBar: _directoryAppBar(),
+        body: Column(
           children: [
-            Container(
-              width: 36,
-              height: 36,
-              alignment: Alignment.center,
-              decoration: BoxDecoration(
-                color: WorkspaceColors.ink,
-                borderRadius: BorderRadius.circular(11),
-              ),
-              child: const Text(
-                'GM',
-                style: TextStyle(
-                  color: Colors.white,
-                  fontSize: 13,
-                  fontWeight: FontWeight.w900,
+            _connectionBanner(),
+            Expanded(child: _tab == 0 ? _shopList() : _deliveryList()),
+          ],
+        ),
+        floatingActionButton: c.isOwner && _tab == 0
+            ? FloatingActionButton.extended(
+                key: ValueKey('home-add-$_tab'),
+                onPressed: c.busy
+                    ? null
+                    : () {
+                        if (_tab == 0) {
+                          _edit();
+                        } else {
+                          _scanBill();
+                        }
+                      },
+                icon: Icon(_tab == 0 ? Icons.add : Icons.photo_camera_outlined),
+                label: Text(_tab == 0 ? 'Add shop' : 'Scan Next Bill'),
+              )
+            : null,
+        bottomNavigationBar: NavigationBar(
+          selectedIndex: _tab,
+          onDestinationSelected: (tab) {
+            if (_routeDirty && tab != _tab) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text(
+                    'Save the delivery order or reset the draft before switching tabs.',
+                  ),
                 ),
-              ),
+              );
+              return;
+            }
+            setState(() => _tab = tab);
+          },
+          destinations: [
+            NavigationDestination(
+              icon: Icon(Icons.storefront_outlined),
+              selectedIcon: Icon(Icons.storefront_rounded),
+              label: c.isOwner ? 'All Shops' : 'Shops',
             ),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text(
-                    'G.M. Enterprises',
-                    style: TextStyle(
-                      fontWeight: FontWeight.w800,
-                      fontSize: 17,
-                      letterSpacing: -.5,
-                    ),
-                  ),
-                  Text(
-                    c.isOwner ? 'OWNER WORKSPACE' : 'DELIVERY WORKSPACE',
-                    style: const TextStyle(
-                      fontSize: 9,
-                      letterSpacing: 1.4,
-                      color: WorkspaceColors.muted,
-                    ),
-                  ),
-                ],
-              ),
+            NavigationDestination(
+              icon: Icon(Icons.route_outlined),
+              selectedIcon: Icon(Icons.route_rounded),
+              label: c.isOwner ? 'Assign Delivery' : 'Deliveries',
             ),
           ],
         ),
-        actions: [
-          if (c.shared)
-            IconButton(
-              tooltip: 'Sync records',
-              onPressed: c.busy ? null : () => runAction(context, c.refresh),
-              icon: const Icon(Icons.sync_rounded),
-            ),
-          IconButton(
-            tooltip: 'Account and saved records',
-            onPressed: _accountSheet,
-            icon: const Icon(Icons.account_circle_outlined),
-          ),
-        ],
-        bottom: c.busy
-            ? const PreferredSize(
-                preferredSize: Size.fromHeight(2),
-                child: LinearProgressIndicator(minHeight: 2),
-              )
-            : null,
-      ),
-      body: Column(
-        children: [
-          _connectionBanner(),
-          Expanded(
-            child: _tab == 2 && c.isOwner
-                ? OwnerDashboard(
-                    controller: c,
-                    onScan: () => Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (_) =>
-                            BillScanScreen(controller: c, date: DateTime.now()),
-                      ),
-                    ),
-                    onShops: () => setState(() {
-                      _tab = 0;
-                      _search = '';
-                      _shopSearch.clear();
-                      _area = null;
-                      _locationFilter = 'All locations';
-                    }),
-                    onReadyLocations: () => setState(() {
-                      _tab = 0;
-                      _search = '';
-                      _shopSearch.clear();
-                      _area = null;
-                      _locationFilter = 'Ready for delivery';
-                    }),
-                    onDeliveries: () => setState(() {
-                      _tab = 1;
-                      _date = DateTime.now();
-                    }),
-                    onAddShop: () => _edit(),
-                    onImport: () => Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (_) => ShopImportScreen(controller: c),
-                      ),
-                    ),
-                    onMissingLocations: () => setState(() {
-                      _tab = 0;
-                      _search = '';
-                      _shopSearch.clear();
-                      _area = null;
-                      _locationFilter = 'Needs attention';
-                    }),
-                  )
-                : _tab == 0
-                ? _shopList()
-                : _deliveryList(),
-          ),
-        ],
-      ),
-      floatingActionButton: c.isOwner && _tab != 2
-          ? FloatingActionButton.extended(
-              onPressed: c.busy
-                  ? null
-                  : () {
-                      if (_tab == 0) {
-                        _edit();
-                      } else {
-                        showAddStops(context, c, _date);
-                      }
-                    },
-              icon: Icon(
-                _tab == 0
-                    ? Icons.add_location_alt_outlined
-                    : Icons.playlist_add_rounded,
-              ),
-              label: Text(_tab == 0 ? 'Add shop' : 'Add stops'),
-            )
-          : null,
-      bottomNavigationBar: NavigationBar(
-        selectedIndex: c.isOwner
-            ? (_tab == 2 ? 0 : _tab + 1)
-            : (_tab == 2 ? 1 : _tab),
-        onDestinationSelected: (tab) =>
-            setState(() => _tab = c.isOwner ? (tab == 0 ? 2 : tab - 1) : tab),
-        destinations: [
-          if (c.isOwner)
-            const NavigationDestination(
-              icon: Icon(Icons.space_dashboard_outlined),
-              selectedIcon: Icon(Icons.space_dashboard_rounded),
-              label: 'Overview',
-            ),
-          const NavigationDestination(
-            icon: Icon(Icons.storefront_outlined),
-            selectedIcon: Icon(Icons.storefront_rounded),
-            label: 'Shops',
-          ),
-          const NavigationDestination(
-            icon: Icon(Icons.route_outlined),
-            selectedIcon: Icon(Icons.route_rounded),
-            label: 'Deliveries',
-          ),
-        ],
       ),
     ),
   );
 
+  AppBar _directoryAppBar() => AppBar(
+    toolbarHeight: 80,
+    titleSpacing: 16,
+    title: Row(
+      children: [
+        Container(
+          width: 32,
+          height: 32,
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            color: DirectoryDesign.navy,
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: const Text(
+            'GM',
+            style: TextStyle(
+              color: Colors.white,
+              fontSize: 12,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+        ),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'G.M. Delivery',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: 17,
+                  fontWeight: FontWeight.w700,
+                  color: DirectoryDesign.navy,
+                ),
+              ),
+              Text(
+                c.isOwner
+                    ? 'Wholesale Stationery Logistics'
+                    : (c.profile?.name ?? 'Delivery account'),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(fontSize: 10, color: DirectoryDesign.muted),
+              ),
+            ],
+          ),
+        ),
+      ],
+    ),
+    actions: [
+      if (!c.isOwner)
+        IconButton(
+          tooltip: 'Daily settlements',
+          icon: const Icon(Icons.receipt_long_outlined),
+          onPressed: () => Navigator.push(
+            context,
+            MaterialPageRoute(builder: (_) => SettlementsScreen(controller: c)),
+          ),
+        ),
+      IconButton(
+        tooltip: 'Account and saved records',
+        onPressed: _accountSheet,
+        icon: CircleAvatar(
+          radius: 16,
+          backgroundColor: const Color(0xffdce1ff),
+          child: Text(
+            (c.profile?.name.trim().isNotEmpty ?? false)
+                ? c.profile!.name.trim().characters.first.toUpperCase()
+                : c.isOwner
+                ? 'O'
+                : 'D',
+            style: const TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w700,
+              color: DirectoryDesign.navy,
+            ),
+          ),
+        ),
+      ),
+      if (widget.onSignOut != null)
+        IconButton(
+          tooltip: 'Sign out',
+          onPressed: c.busy
+              ? null
+              : () => runAction(context, widget.onSignOut!),
+          style: IconButton.styleFrom(
+            backgroundColor: const Color(0xffffece9),
+            foregroundColor: const Color(0xffba1a1a),
+          ),
+          icon: const Icon(Icons.logout, size: 20),
+        ),
+      const SizedBox(width: 8),
+    ],
+    bottom: c.busy
+        ? const PreferredSize(
+            preferredSize: Size.fromHeight(2),
+            child: LinearProgressIndicator(minHeight: 2),
+          )
+        : null,
+  );
+
   Widget _connectionBanner() {
+    final failure = c.syncError ?? c.ledgerSyncError ?? c.settlementSyncError;
     final message = !c.shared
         ? 'Saved on this phone only. Sharing is not enabled yet.'
-        : c.syncError != null
-        ? c.syncError!
-        : c.pending.isNotEmpty
-        ? '${c.pending.length} result(s) waiting to sync'
-        : c.lastSynced == null
-        ? 'Downloading shared records…'
-        : 'Shared records • ${c.profile?.name ?? ''}';
+        : failure ??
+              (c.pendingCount > 0
+                  ? '${c.pendingCount} operation(s) waiting to sync'
+                  : c.lastSynced == null
+                  ? 'Downloading shared records…'
+                  : 'Shared records • ${c.profile?.name ?? ''}');
     return Container(
       width: double.infinity,
-      color: c.syncError == null
+      color: failure == null
           ? const Color(0xffe5eee6)
           : const Color(0xffffedda),
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
@@ -273,7 +274,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           Icon(
             !c.shared
                 ? Icons.phone_android_rounded
-                : c.syncError != null
+                : failure != null
                 ? Icons.cloud_off_outlined
                 : Icons.cloud_done_outlined,
             size: 18,
@@ -286,435 +287,263 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   }
 
   Widget _shopList() {
-    final areas = c.shops.map((s) => s.area).toSet().toList()..sort();
-    final matching = c.shops
-        .where(
-          (s) =>
-              (_area == null || s.area == _area) &&
-              (_locationFilter == 'All locations' ||
-                  (_locationFilter == 'Needs attention' &&
-                      !s.readyForDelivery) ||
-                  s.locationStatus == _locationFilter) &&
-              '${s.name} ${s.area} ${s.address} ${s.landmark} ${s.phone}'
-                  .toLowerCase()
-                  .contains(_search.toLowerCase()),
-        )
-        .toList();
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(16, 20, 16, 12),
-          child: Row(
-            children: [
-              const Expanded(
-                child: Text(
-                  'Shop directory',
-                  style: TextStyle(fontSize: 25, fontWeight: FontWeight.w800),
-                ),
-              ),
-              Text(
-                '${c.shops.length} saved',
-                style: const TextStyle(color: Color(0xff527064)),
-              ),
-            ],
-          ),
+    if (!c.isOwner) {
+      final assigned = c.stops
+          .where((s) => s.driverId == c.accountId)
+          .map((s) => s.shopId)
+          .toSet();
+      return DriverShopSearch(
+        shops: c.shops.where((s) => assigned.contains(s.id)).toList(),
+        todayShopIds: c.stopsFor(DateTime.now()).map((s) => s.shopId).toSet(),
+        searchController: _shopSearch,
+        search: _search,
+        onSearch: (value) => setState(() => _search = value),
+        busy: c.busy,
+        onRefresh: c.refresh,
+        onOpen: _details,
+        onCall: (shop) => callShop(context, shop),
+        onMap: (shop) => showDriverShopLocation(
+          context,
+          shop,
+          onNavigate: (shop) => navigateTo(context, shop),
+          onCall: (shop) => callShop(context, shop),
         ),
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16),
-          child: TextField(
-            controller: _shopSearch,
-            onChanged: (v) => setState(() => _search = v),
-            decoration: const InputDecoration(
-              hintText: 'Search shop, area or landmark',
-              prefixIcon: Icon(Icons.search_rounded),
-            ),
-          ),
-        ),
-        if (c.isOwner)
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-            child: Row(
-              children: [
-                Expanded(
-                  child: DropdownButton<String>(
-                    isExpanded: true,
-                    value: _locationFilter,
-                    items:
-                        [
-                              'All locations',
-                              'Needs attention',
-                              'Needs location',
-                              'Needs verification',
-                              'Ready for delivery',
-                            ]
-                            .map(
-                              (value) => DropdownMenuItem(
-                                value: value,
-                                child: Text(value),
-                              ),
-                            )
-                            .toList(),
-                    onChanged: (value) =>
-                        setState(() => _locationFilter = value!),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                TextButton.icon(
-                  onPressed: c.busy
-                      ? null
-                      : () => Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (_) => ShopImportScreen(controller: c),
-                          ),
-                        ),
-                  icon: const Icon(Icons.upload_file_outlined),
-                  label: const Text('Import Excel'),
-                ),
-              ],
-            ),
-          ),
-        if (areas.isNotEmpty)
-          SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-            child: Row(
-              children: [
-                Padding(
-                  padding: const EdgeInsets.only(right: 8),
-                  child: ChoiceChip(
-                    label: const Text('All areas'),
-                    selected: _area == null,
-                    onSelected: (_) => setState(() => _area = null),
-                  ),
-                ),
-                for (final area in areas)
-                  Padding(
-                    padding: const EdgeInsets.only(right: 8),
-                    child: ChoiceChip(
-                      label: Text(area),
-                      selected: _area == area,
-                      onSelected: (_) =>
-                          setState(() => _area = _area == area ? null : area),
-                    ),
-                  ),
-              ],
-            ),
-          ),
-        Expanded(
-          child: matching.isEmpty
-              ? EmptyState(
-                  icon: Icons.add_business_outlined,
-                  title: c.shops.isEmpty
-                      ? 'Your shop directory starts here'
-                      : 'No matching shops',
-                  message: c.shops.isEmpty
-                      ? c.isOwner
-                            ? 'Add your first shop, capture its entrance location, and save a landmark.'
-                            : 'An owner will assign shops for your deliveries. Sync after the list is ready.'
-                      : 'Try another shop name or area.',
-                  action: c.shops.isEmpty && c.isOwner
-                      ? FilledButton.icon(
-                          onPressed: () => _edit(),
-                          icon: const Icon(Icons.add),
-                          label: const Text('Add first shop'),
-                        )
-                      : null,
-                )
-              : RefreshIndicator(
-                  onRefresh: c.refresh,
-                  child: ListView.builder(
-                    physics: const AlwaysScrollableScrollPhysics(),
-                    padding: const EdgeInsets.fromLTRB(12, 0, 12, 100),
-                    itemCount: matching.length,
-                    itemBuilder: (context, index) {
-                      final shop = matching[index];
-                      return Card(
-                        child: ListTile(
-                          contentPadding: const EdgeInsets.symmetric(
-                            horizontal: 16,
-                            vertical: 10,
-                          ),
-                          leading: CircleAvatar(
-                            backgroundColor: const Color(0xffe5eee6),
-                            child: Icon(
-                              shop.readyForDelivery
-                                  ? Icons.location_on_outlined
-                                  : Icons.location_off_outlined,
-                              color: shop.readyForDelivery
-                                  ? const Color(0xff09685d)
-                                  : Colors.deepOrange,
-                            ),
-                          ),
-                          title: Text(
-                            shop.name,
-                            style: const TextStyle(fontWeight: FontWeight.w700),
-                          ),
-                          subtitle: Text(
-                            '${shop.area}\n${shop.readyForDelivery
-                                ? shop.landmark.isEmpty
-                                      ? shop.locationDescription
-                                      : shop.landmark
-                                : shop.locationStatus}',
-                          ),
-                          isThreeLine: true,
-                          trailing: const Icon(Icons.chevron_right),
-                          onTap: () => _details(shop),
-                        ),
-                      );
-                    },
-                  ),
-                ),
-        ),
-      ],
+      );
+    }
+    return ShopDirectory(
+      shops: c.shops,
+      search: _search,
+      searchController: _shopSearch,
+      onSearch: (value) => setState(() => _search = value),
+      area: _area,
+      onArea: (value) => setState(() => _area = value),
+      locationFilter: _locationFilter,
+      onLocationFilter: (value) => setState(() => _locationFilter = value),
+      isOwner: c.isOwner,
+      busy: c.busy,
+      onImport: () => Navigator.push(
+        context,
+        MaterialPageRoute(builder: (_) => ShopImportScreen(controller: c)),
+      ),
+      onAdd: () => _edit(),
+      onOpen: _details,
+      onCall: (shop) => callShop(context, shop),
+      onRefresh: c.refresh,
     );
   }
 
   Widget _deliveryList() {
-    final stops = c.stopsFor(_date);
-    final complete = stops
-        .where((s) => s.status == VisitStatus.delivered)
-        .length;
-    final pending = stops.where((s) => s.status == VisitStatus.pending).length;
-    final next = stops
-        .where((s) => s.status == VisitStatus.pending)
-        .firstOrNull;
-    return Column(
-      children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(16, 16, 12, 8),
-          child: Row(
-            children: [
-              Expanded(
-                child: Text(
-                  dateKey(_date) == dateKey(DateTime.now())
-                      ? 'Today’s deliveries'
-                      : 'Delivery list',
-                  style: const TextStyle(
-                    fontSize: 24,
-                    fontWeight: FontWeight.w800,
-                  ),
-                ),
-              ),
-              TextButton.icon(
-                onPressed: _chooseDate,
-                icon: const Icon(Icons.calendar_month_outlined, size: 18),
-                label: Text(readableDate(_date)),
-              ),
-            ],
+    if (c.isOwner) {
+      return OwnerRoutePlanner(
+        controller: c,
+        date: _date,
+        onScan: _scanBill,
+        onAddStops: () => showAddStops(context, c, _date),
+        onChooseDate: _chooseDate,
+        stopBuilder: _stopCard,
+        onDraftChanged: (dirty) => setState(() => _routeDirty = dirty),
+      );
+    }
+    return DriverDeliveryBoard(
+      controller: c,
+      date: _date,
+      onChooseDate: _chooseDate,
+      onNavigate: (shop) => navigateTo(context, shop),
+      onCall: (shop) => callShop(context, shop),
+      onShop: _details,
+      onDelivered: _openCollection,
+      onFailed: (stop) => _result(stop, initialStatus: VisitStatus.failed),
+      onReopen: _reset,
+      onLedger: (shop) => openShopLedger(context, c, shop.id),
+      onCollection: _openCollection,
+      onSettlement: () => Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => SettlementScreen(
+            controller: c,
+            driverId: c.accountId,
+            date: dateKey(_date),
           ),
         ),
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16),
-          child: Row(
-            children: [
-              _stat('Stops', stops.length),
-              const SizedBox(width: 10),
-              _stat('Pending', pending),
-              const SizedBox(width: 10),
-              _stat('Delivered', complete),
-            ],
-          ),
-        ),
-        if (next != null && c.shopFor(next.shopId) != null)
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 14, 16, 8),
-            child: SizedBox(
-              width: double.infinity,
-              child: FilledButton.icon(
-                onPressed: () => navigateTo(context, c.shopFor(next.shopId)!),
-                icon: const Icon(Icons.navigation_outlined),
-                label: Text(
-                  'Navigate to ${c.shopFor(next.shopId)!.name}',
-                  maxLines: 2,
-                ),
-              ),
-            ),
-          ),
-        if (c.isOwner)
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
-            child: SizedBox(
-              width: double.infinity,
-              child: OutlinedButton.icon(
-                onPressed: c.busy
-                    ? null
-                    : () => Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (_) =>
-                              BillScanScreen(controller: c, date: _date),
-                        ),
-                      ),
-                icon: const Icon(Icons.document_scanner_outlined),
-                label: const Text('Scan bill to add delivery'),
-              ),
-            ),
-          ),
-        Expanded(
-          child: stops.isEmpty
-              ? SingleChildScrollView(
-                  padding: const EdgeInsets.only(bottom: 100),
-                  child: EmptyState(
-                    icon: Icons.route_rounded,
-                    title: 'No stops for this day',
-                    message: c.isOwner
-                        ? 'Choose shops and assign a delivery person.'
-                        : 'Sync to check for your assigned deliveries.',
-                    action: c.isOwner
-                        ? FilledButton.icon(
-                            onPressed: () => showAddStops(context, c, _date),
-                            icon: const Icon(Icons.playlist_add),
-                            label: const Text('Prepare delivery list'),
-                          )
-                        : null,
-                  ),
-                )
-              : RefreshIndicator(
-                  onRefresh: c.refresh,
-                  child: ListView.builder(
-                    physics: const AlwaysScrollableScrollPhysics(),
-                    padding: const EdgeInsets.fromLTRB(12, 10, 12, 100),
-                    itemCount: stops.length,
-                    itemBuilder: (context, index) =>
-                        _stopCard(stops[index], index + 1),
-                  ),
-                ),
-        ),
-      ],
+      ),
     );
   }
 
-  Widget _stat(String label, int value) => Expanded(
-    child: Container(
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-      ),
-      padding: const EdgeInsets.all(14),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            '$value',
-            style: const TextStyle(fontSize: 26, fontWeight: FontWeight.w800),
-          ),
-          Text(
-            label,
-            style: const TextStyle(fontSize: 12, color: Color(0xff527064)),
-          ),
-        ],
-      ),
+  Future<void> _openCollection(DeliveryStop stop) => Navigator.push(
+    context,
+    MaterialPageRoute(
+      builder: (_) =>
+          CollectionForm(controller: c, shopId: stop.shopId, stopId: stop.id),
     ),
   );
 
   Widget _stopCard(DeliveryStop stop, int number) {
     final shop = c.shopFor(stop.shopId);
-    if (shop == null) return const SizedBox.shrink();
+    return shop == null
+        ? const SizedBox.shrink()
+        : _dispatchStopCard(stop, shop, number);
+  }
+
+  Future<void> _scanBill() => Navigator.push(
+    context,
+    MaterialPageRoute(
+      builder: (_) => BillScanScreen(controller: c, date: _date),
+    ),
+  );
+
+  Widget _dispatchStopCard(DeliveryStop stop, Shop shop, int number) {
     final queued = c.pendingStopIds.contains(stop.id);
-    final done = stop.status == VisitStatus.delivered;
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                CircleAvatar(
-                  radius: 17,
-                  backgroundColor: done
-                      ? const Color(0xffe5eee6)
-                      : const Color(0xffedf1f5),
-                  child: done
-                      ? const Icon(Icons.check, size: 18)
-                      : Text('$number'),
+    final driver = c.profiles
+        .where((profile) => profile.id == stop.driverId)
+        .firstOrNull;
+    final color = stop.status == VisitStatus.failed
+        ? const Color(0xffa66b12)
+        : DirectoryDesign.teal;
+    return DispatchCard(
+      key: ValueKey('dispatch-stop-${stop.id}'),
+      accent: color,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            alignment: WrapAlignment.spaceBetween,
+            children: [
+              DispatchBadge(
+                queued
+                    ? 'Waiting to sync'
+                    : stop.status == VisitStatus.pending
+                    ? 'Scheduled for dispatch'
+                    : stop.status.label,
+                icon: queued
+                    ? Icons.cloud_upload_outlined
+                    : stop.status == VisitStatus.pending
+                    ? Icons.schedule_send_outlined
+                    : Icons.task_alt,
+                color: queued ? const Color(0xffa66b12) : color,
+              ),
+              DispatchBadge(
+                'Stop $number',
+                icon: Icons.route_outlined,
+                color: DirectoryDesign.navy,
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          InkWell(
+            onTap: () => _details(shop),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 4),
+              child: Text(
+                shop.name,
+                style: const TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w700,
                 ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: InkWell(
-                    onTap: () => _details(shop),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          shop.name,
-                          style: const TextStyle(
-                            fontSize: 17,
-                            fontWeight: FontWeight.w700,
+              ),
+            ),
+          ),
+          const SizedBox(height: 8),
+          DispatchDropPoint(shop: shop, onCall: () => callShop(context, shop)),
+          const SizedBox(height: 10),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Icon(
+                Icons.person_pin_circle_outlined,
+                size: 19,
+                color: DirectoryDesign.teal,
+              ),
+              const SizedBox(width: 6),
+              Expanded(
+                child: Text(
+                  'Assigned to ${driver?.name ?? 'delivery account unavailable'}',
+                  style: const TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'Outstanding: ${rupees(c.balanceFor(shop.id).balancePaise)}',
+            style: const TextStyle(fontSize: 13, color: DirectoryDesign.muted),
+          ),
+          if (stop.reason.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(top: 8),
+              child: Text(stop.reason),
+            ),
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 8,
+            runSpacing: 6,
+            children: [
+              OutlinedButton.icon(
+                onPressed: shop.readyForDelivery
+                    ? () => navigateTo(context, shop)
+                    : null,
+                icon: const Icon(Icons.near_me_outlined, size: 17),
+                label: const Text('View drop point'),
+              ),
+              if (stop.status == VisitStatus.pending)
+                FilledButton.icon(
+                  onPressed: queued || c.busy ? null : () => _result(stop),
+                  icon: const Icon(Icons.task_alt, size: 17),
+                  label: const Text('Update result'),
+                ),
+            ],
+          ),
+          ExpansionTile(
+            tilePadding: EdgeInsets.zero,
+            title: const Text(
+              'Delivery actions',
+              style: TextStyle(fontSize: 12),
+            ),
+            children: [
+              Wrap(
+                spacing: 8,
+                runSpacing: 6,
+                children: [
+                  TextButton.icon(
+                    onPressed: () => openShopLedger(context, c, shop.id),
+                    icon: const Icon(Icons.receipt_long_outlined, size: 17),
+                    label: const Text('Ledger'),
+                  ),
+                  if (stop.status == VisitStatus.delivered)
+                    TextButton.icon(
+                      onPressed: () => Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => CollectionForm(
+                            controller: c,
+                            shopId: shop.id,
+                            stopId: stop.id,
                           ),
                         ),
-                        Text(
-                          shop.area,
-                          style: const TextStyle(color: Color(0xff527064)),
-                        ),
-                      ],
+                      ),
+                      icon: const Icon(Icons.payments_outlined, size: 17),
+                      label: const Text('Record collection'),
                     ),
-                  ),
-                ),
-                if (c.isOwner && stop.status == VisitStatus.pending && !queued)
-                  IconButton(
-                    tooltip: 'Remove this stop',
-                    icon: const Icon(Icons.remove_circle_outline),
-                    onPressed: c.busy ? null : () => _removeStop(stop),
-                  ),
-              ],
-            ),
-            if (shop.landmark.isNotEmpty)
-              Padding(
-                padding: const EdgeInsets.only(top: 10),
-                child: Text(shop.landmark),
+                  if (stop.status != VisitStatus.pending && !queued)
+                    TextButton(
+                      onPressed: c.busy ? null : () => _reset(stop),
+                      child: const Text('Reopen delivery'),
+                    ),
+                  if (stop.status == VisitStatus.pending && !queued)
+                    TextButton.icon(
+                      onPressed: c.busy ? null : () => _removeStop(stop),
+                      icon: const Icon(Icons.remove_circle_outline, size: 17),
+                      label: const Text('Remove this stop'),
+                    ),
+                ],
               ),
-            Padding(
-              padding: const EdgeInsets.symmetric(vertical: 8),
-              child: Text(
-                '${stop.status.label}${queued ? ' • waiting to sync' : ''}',
-                style: TextStyle(
-                  fontWeight: FontWeight.w600,
-                  color: stop.status == VisitStatus.failed
-                      ? Colors.deepOrange
-                      : const Color(0xff09685d),
-                ),
-              ),
-            ),
-            if (stop.reason.isNotEmpty)
-              Padding(
-                padding: const EdgeInsets.only(bottom: 8),
-                child: Text(stop.reason),
-              ),
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: [
-                FilledButton.tonalIcon(
-                  onPressed: shop.readyForDelivery
-                      ? () => navigateTo(context, shop)
-                      : null,
-                  icon: const Icon(Icons.navigation_outlined, size: 18),
-                  label: const Text('Navigate'),
-                ),
-                if (shop.phone.isNotEmpty)
-                  OutlinedButton.icon(
-                    onPressed: () => callShop(context, shop),
-                    icon: const Icon(Icons.call_outlined, size: 18),
-                    label: const Text('Call'),
-                  ),
-                if (stop.status == VisitStatus.pending)
-                  OutlinedButton.icon(
-                    onPressed: c.busy || queued ? null : () => _result(stop),
-                    icon: const Icon(Icons.task_alt, size: 18),
-                    label: const Text('Update result'),
-                  ),
-                if (stop.status != VisitStatus.pending && !queued)
-                  TextButton(
-                    onPressed: c.busy ? null : () => _reset(stop),
-                    child: const Text('Reopen delivery'),
-                  ),
-              ],
-            ),
-          ],
-        ),
+            ],
+          ),
+        ],
       ),
     );
   }
@@ -767,15 +596,19 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     }
   }
 
-  Future<void> _result(DeliveryStop stop) async {
+  Future<void> _result(
+    DeliveryStop stop, {
+    VisitStatus initialStatus = VisitStatus.delivered,
+  }) async {
     final reason = TextEditingController();
-    var status = VisitStatus.delivered;
+    var status = initialStatus;
     final form = GlobalKey<FormState>();
     final result = await showDialog<VisitStatus>(
       context: context,
       builder: (context) => StatefulBuilder(
         builder: (context, setDialogState) => AlertDialog(
           title: const Text('Delivery result'),
+          scrollable: true,
           content: Form(
             key: form,
             child: Column(
@@ -829,6 +662,19 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     final note = reason.text;
     // Dialog route animations may still reference the controller until disposed.
     if (result != null && mounted) {
+      if (result == VisitStatus.delivered) {
+        await Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => CollectionForm(
+              controller: c,
+              shopId: stop.shopId,
+              stopId: stop.id,
+            ),
+          ),
+        );
+        return;
+      }
       await runAction(
         context,
         () => c.recordVisit(stop, result, reason: note),
@@ -844,7 +690,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     showDragHandle: true,
     isScrollControlled: true,
     builder: (sheetContext) => SafeArea(
-      child: Padding(
+      child: SingleChildScrollView(
         padding: const EdgeInsets.fromLTRB(24, 8, 24, 24),
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -856,6 +702,51 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             ),
             const SizedBox(height: 8),
             Text(c.isOwner ? 'Owner account' : 'Delivery account'),
+            const SizedBox(height: 16),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                OutlinedButton.icon(
+                  onPressed: () {
+                    Navigator.pop(sheetContext);
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => SettlementsScreen(controller: c),
+                      ),
+                    );
+                  },
+                  icon: const Icon(Icons.receipt_long_outlined),
+                  label: const Text('Daily settlements'),
+                ),
+                if (c.isOwner)
+                  OutlinedButton.icon(
+                    onPressed: () {
+                      Navigator.pop(sheetContext);
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => OutstandingScreen(controller: c),
+                        ),
+                      );
+                    },
+                    icon: const Icon(Icons.account_balance_wallet_outlined),
+                    label: const Text('Outstanding balances'),
+                  ),
+                if (c.shared)
+                  TextButton.icon(
+                    onPressed: c.busy
+                        ? null
+                        : () {
+                            Navigator.pop(sheetContext);
+                            runAction(context, c.refresh);
+                          },
+                    icon: const Icon(Icons.sync),
+                    label: const Text('Sync records'),
+                  ),
+              ],
+            ),
             const SizedBox(height: 16),
             Text(
               c.shared
@@ -900,6 +791,42 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                   }
                 },
                 child: const Text('Resolve a sync conflict'),
+              ),
+            ],
+            if (c.pendingLedger.isNotEmpty) ...[
+              const SizedBox(height: 12),
+              Text(
+                '${c.pendingLedger.length} financial operation(s) saved on this phone.',
+              ),
+              TextButton(
+                onPressed: () {
+                  Navigator.pop(sheetContext);
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => CollectionQueueScreen(controller: c),
+                    ),
+                  );
+                },
+                child: const Text('View collection sync queue'),
+              ),
+            ],
+            if (c.pendingSettlements.isNotEmpty) ...[
+              const SizedBox(height: 12),
+              Text(
+                '${c.pendingSettlements.length} settlement request(s) saved on this phone.',
+              ),
+              TextButton(
+                onPressed: () {
+                  Navigator.pop(sheetContext);
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => SettlementsScreen(controller: c),
+                    ),
+                  );
+                },
+                child: const Text('Review settlement sync requests'),
               ),
             ],
             if (widget.onSignOut != null)
@@ -955,6 +882,22 @@ class _AddStopsSheetState extends State<AddStopsSheet> {
   void initState() {
     super.initState();
     _driver = widget.controller.drivers.firstOrNull?.id;
+    final existing = widget.controller
+        .stopsFor(widget.date)
+        .map((s) => s.shopId)
+        .toSet();
+    if (dateKey(widget.date).compareTo(dateKey(DateTime.now())) >= 0) {
+      _selected.addAll(
+        widget.controller.shops
+            .where(
+              (s) =>
+                  s.readyForDelivery &&
+                  !existing.contains(s.id) &&
+                  widget.controller.balanceFor(s.id).collectNextVisit,
+            )
+            .map((s) => s.id),
+      );
+    }
   }
 
   Future<void> _save() async {
@@ -1063,7 +1006,9 @@ class _AddStopsSheetState extends State<AddStopsSheet> {
                             return CheckboxListTile(
                               value: _selected.contains(shop.id),
                               title: Text(shop.name),
-                              subtitle: Text(shop.area),
+                              subtitle: Text(
+                                '${shop.area}${c.balanceFor(shop.id).collectNextVisit ? ' · Collect outstanding balance' : ''}',
+                              ),
                               onChanged: _saving
                                   ? null
                                   : (checked) => setState(() {
@@ -1171,13 +1116,17 @@ class ShopDetails extends StatelessWidget {
               _detail(Icons.info_outline, 'Delivery instructions', shop.notes),
             if (shop.phone.isNotEmpty)
               _detail(Icons.phone_outlined, 'Contact', shop.phone),
-            if (shop.hasCoordinates)
-              Padding(
-                padding: const EdgeInsets.symmetric(vertical: 12),
-                child: SelectableText(
-                  '${shop.latitude!.toStringAsFixed(6)}, ${shop.longitude!.toStringAsFixed(6)}',
-                  style: const TextStyle(color: Color(0xff527064)),
-                ),
+            if (shop.contactName.isNotEmpty)
+              _detail(
+                Icons.person_outline,
+                'Proprietor / contact person',
+                shop.contactName,
+              ),
+            if (shop.postalCode.isNotEmpty)
+              _detail(
+                Icons.local_post_office_outlined,
+                'PIN code',
+                shop.postalCode,
               ),
             const SizedBox(height: 12),
             if (controller.isOwner) ...[
@@ -1208,6 +1157,11 @@ class ShopDetails extends StatelessWidget {
                 ),
               ),
             ],
+            OutlinedButton.icon(
+              onPressed: () => openShopLedger(context, controller, shop.id),
+              icon: const Icon(Icons.receipt_long_outlined),
+              label: const Text('View shop ledger'),
+            ),
             FilledButton.icon(
               onPressed: shop.readyForDelivery
                   ? () => navigateTo(context, shop)

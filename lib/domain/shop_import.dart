@@ -4,6 +4,7 @@ import 'package:excel/excel.dart';
 import 'package:uuid/uuid.dart';
 import 'maps_location.dart';
 import 'models.dart';
+import 'ledger.dart';
 
 String shopImportKey(Shop shop) {
   String normalize(String value) =>
@@ -14,11 +15,18 @@ String shopImportKey(Shop shop) {
 }
 
 class ShopImportRow {
-  const ShopImportRow(this.number, this.name, {this.shop, this.error});
+  const ShopImportRow(
+    this.number,
+    this.name, {
+    this.shop,
+    this.error,
+    this.openingBalancePaise,
+  });
   final int number;
   final String name;
   final Shop? shop;
   final String? error;
+  final int? openingBalancePaise;
 }
 
 class ShopImportSheet {
@@ -46,6 +54,11 @@ const _headerAliases = {
   'contact': 'phone',
   'contactnumber': 'phone',
   'mobile': 'phone',
+  'contactperson': 'contact_name',
+  'proprietor': 'contact_name',
+  'contactname': 'contact_name',
+  'pincode': 'postal_code',
+  'postalcode': 'postal_code',
   'landmark': 'landmark',
   'notes': 'notes',
   'deliveryinstructions': 'notes',
@@ -53,6 +66,7 @@ const _headerAliases = {
   'lat': 'latitude',
   'longitude': 'longitude',
   'lng': 'longitude',
+  'openingbalance': 'opening',
 };
 
 String _cell(Data? cell) => switch (cell?.value) {
@@ -183,11 +197,22 @@ List<ShopImportSheet> parseShopWorkbook(Uint8List bytes) {
         final phone = read('phone'),
             landmark = read('landmark'),
             notes = read('notes');
+        final opening = read('opening');
+        final contactName = read('contact_name'),
+            postalCode = read('postal_code');
+        if (postalCode.isNotEmpty &&
+            !RegExp(r'^[1-9][0-9]{5}$').hasMatch(postalCode)) {
+          throw const FormatException(
+            'PIN code must contain six digits and start with 1–9.',
+          );
+        }
+        final openingPaise = opening.isEmpty ? null : parsePaise(opening);
         for (final field in [
           (name, 200, 'Name'),
           (area, 200, 'Area'),
           (address, 1000, 'Address'),
           (phone, 30, 'Phone'),
+          (contactName, 200, 'Contact person'),
           (landmark, 500, 'Landmark'),
           (notes, 1000, 'Delivery instructions'),
         ]) {
@@ -207,12 +232,15 @@ List<ShopImportSheet> parseShopWorkbook(Uint8List bytes) {
           ShopImportRow(
             i + 1,
             name,
+            openingBalancePaise: openingPaise,
             shop: Shop(
               id: id,
               name: name,
               area: area,
               address: address,
               phone: phone,
+              contactName: contactName,
+              postalCode: postalCode,
               landmark: landmark,
               notes: notes,
               mapsUrl: mapsUrl,

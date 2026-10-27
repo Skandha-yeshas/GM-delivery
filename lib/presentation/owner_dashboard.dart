@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import '../application/delivery_controller.dart';
 import '../domain/models.dart';
 import 'workspace_design.dart';
+import '../domain/ledger.dart';
+import 'ledger_screen.dart';
 
 class OwnerDashboard extends StatelessWidget {
   const OwnerDashboard({
@@ -155,6 +157,27 @@ class OwnerDashboard extends StatelessWidget {
               ),
             ),
           ],
+        ),
+        const SizedBox(height: 24),
+        WorkspaceCard(
+          child: ListTile(
+            contentPadding: EdgeInsets.zero,
+            leading: const Icon(Icons.account_balance_wallet_outlined),
+            title: Text(
+              'Outstanding ${rupees(controller.shops.fold<int>(0, (sum, shop) {
+                final balance = controller.balanceFor(shop.id).balancePaise;
+                return sum + (balance > 0 ? balance : 0);
+              }))}',
+            ),
+            subtitle: const Text('Shop ledgers, payments and opening balances'),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (_) => OutstandingScreen(controller: controller),
+              ),
+            ),
+          ),
         ),
         const SizedBox(height: 24),
         const WorkspaceLabel('Quick actions'),

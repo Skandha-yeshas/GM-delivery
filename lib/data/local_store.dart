@@ -1,6 +1,12 @@
+import 'dart:convert';
 import 'package:path/path.dart' as p;
 import 'package:sqflite/sqflite.dart';
 import '../domain/models.dart';
+import '../domain/ledger.dart';
+import '../domain/settlement.dart';
+import '../domain/route_order.dart';
+part 'ledger_store.dart';
+part 'settlement_store.dart';
 
 class LocalStore {
   LocalStore(this.database);
@@ -11,7 +17,7 @@ class LocalStore {
     return LocalStore(
       await openDatabase(
         path,
-        version: 2,
+        version: 5,
         onConfigure: (db) => db.execute('PRAGMA foreign_keys = ON'),
         onCreate: (db, version) => createSchema(db),
         onUpgrade: upgradeSchema,
@@ -29,12 +35,30 @@ class LocalStore {
         "ALTER TABLE shops ADD COLUMN maps_url TEXT NOT NULL DEFAULT ''",
       );
     }
+    if (oldVersion < 3) await createLedgerTables(db);
+    if (oldVersion < 4) await createSettlementTables(db);
+    if (oldVersion < 5) {
+      final columns = (await db.rawQuery(
+        'PRAGMA table_info(shops)',
+      )).map((c) => c['name']).toSet();
+      if (!columns.contains('contact_name')) {
+        await db.execute(
+          "ALTER TABLE shops ADD COLUMN contact_name TEXT NOT NULL DEFAULT ''",
+        );
+      }
+      if (!columns.contains('postal_code')) {
+        await db.execute(
+          "ALTER TABLE shops ADD COLUMN postal_code TEXT NOT NULL DEFAULT ''",
+        );
+      }
+    }
   }
 
   static Future<void> createSchema(Database db) async {
     await db.execute('''CREATE TABLE shops (
       id TEXT PRIMARY KEY, name TEXT NOT NULL, area TEXT NOT NULL,
       address TEXT NOT NULL, landmark TEXT NOT NULL, phone TEXT NOT NULL,
+      contact_name TEXT NOT NULL DEFAULT '', postal_code TEXT NOT NULL DEFAULT '',
       notes TEXT NOT NULL, maps_url TEXT NOT NULL DEFAULT '', latitude REAL, longitude REAL,
       verified INTEGER NOT NULL, photo_path TEXT, local_photo_path TEXT,
       version INTEGER NOT NULL)''');
@@ -51,6 +75,8 @@ class LocalStore {
     await db.execute(
       'CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)',
     );
+    await createLedgerTables(db);
+    await createSettlementTables(db);
   }
 
   Future<List<Shop>> shops() async => (await database.query(
@@ -84,6 +110,31 @@ class LocalStore {
       whereArgs: [stop.id],
     );
     if (changed == 0) await txn.insert('stops', stop.toMap());
+  });
+
+  /// Update only ordering: never replace visits, money records or queued work.
+  Future<void> saveRouteOrder(
+    List<DeliveryStop> ordered, {
+    RouteOrderCommand? expected,
+  }) => database.transaction((txn) async {
+    if (expected != null) {
+      final rows = await txn.query(
+        'stops',
+        where: 'driver_id = ? AND service_date = ?',
+        whereArgs: [expected.driverId, expected.date],
+      );
+      if (!expected.matches(rows.map(DeliveryStop.fromMap))) {
+        throw StateError('ROUTE_CHANGED');
+      }
+    }
+    for (final stop in ordered) {
+      await txn.update(
+        'stops',
+        {'stop_order': stop.order},
+        where: 'id = ? AND driver_id = ? AND service_date = ?',
+        whereArgs: [stop.id, stop.driverId, stop.date],
+      );
+    }
   });
 
   Future<void> queueVisit(DeliveryStop stop, PendingVisit visit) =>
@@ -126,6 +177,12 @@ class LocalStore {
   ) => database.transaction((txn) async {
     final pending = await txn.query('pending_visits');
     final pendingIds = pending.map((r) => r['stop_id'] as String).toSet();
+    for (final row in await txn.query('pending_ledger')) {
+      final command = LedgerCommand.fromMap(
+        jsonDecode(row['payload'] as String) as Map<String, dynamic>,
+      );
+      if (command.stopId != null) pendingIds.add(command.stopId!);
+    }
     for (final stop in await txn.query('stops')) {
       if (!pendingIds.contains(stop['id'])) {
         await txn.delete('stops', where: 'id = ?', whereArgs: [stop['id']]);

@@ -29,6 +29,8 @@ class Shop {
     this.address = '',
     this.landmark = '',
     this.phone = '',
+    this.contactName = '',
+    this.postalCode = '',
     this.notes = '',
     this.mapsUrl = '',
     this.latitude,
@@ -39,7 +41,16 @@ class Shop {
     this.version = 0,
   });
 
-  final String id, name, area, address, landmark, phone, notes, mapsUrl;
+  final String id,
+      name,
+      area,
+      address,
+      landmark,
+      phone,
+      contactName,
+      postalCode,
+      notes,
+      mapsUrl;
   final double? latitude, longitude;
   final bool verified;
   final String? photoPath, localPhotoPath;
@@ -67,6 +78,8 @@ class Shop {
     address: map['address'] as String? ?? '',
     landmark: map['landmark'] as String? ?? '',
     phone: map['phone'] as String? ?? '',
+    contactName: map['contact_name'] as String? ?? '',
+    postalCode: map['postal_code'] as String? ?? '',
     notes: map['notes'] as String? ?? '',
     mapsUrl: map['maps_url'] as String? ?? '',
     latitude: (map['latitude'] as num?)?.toDouble(),
@@ -84,6 +97,8 @@ class Shop {
     'address': address,
     'landmark': landmark,
     'phone': phone,
+    'contact_name': contactName,
+    'postal_code': postalCode,
     'notes': notes,
     'maps_url': mapsUrl,
     'latitude': latitude,
@@ -101,6 +116,8 @@ class Shop {
     address: address,
     landmark: landmark,
     phone: phone,
+    contactName: contactName,
+    postalCode: postalCode,
     notes: notes,
     mapsUrl: mapsUrl,
     latitude: latitude,
@@ -136,6 +153,17 @@ class DeliveryStop {
   final String id, shopId, date, driverId, reason;
   final int order, version;
   final VisitStatus status;
+
+  DeliveryStop withOrder(int next) => DeliveryStop(
+    id: id,
+    shopId: shopId,
+    date: date,
+    driverId: driverId,
+    order: next,
+    status: status,
+    reason: reason,
+    version: version,
+  );
 
   factory DeliveryStop.fromMap(Map<String, dynamic> map) => DeliveryStop(
     id: map['id'] as String,

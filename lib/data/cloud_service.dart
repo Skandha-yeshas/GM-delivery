@@ -2,6 +2,11 @@ import 'dart:io';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:uuid/uuid.dart';
 import '../domain/models.dart';
+import '../domain/ledger.dart';
+import '../domain/settlement.dart';
+import '../domain/route_order.dart';
+part 'ledger_cloud.dart';
+part 'settlement_cloud.dart';
 
 class CloudSnapshot {
   const CloudSnapshot(this.shops, this.stops, this.profiles);
@@ -14,6 +19,26 @@ class CloudService {
   CloudService(this.client);
   final SupabaseClient client;
   bool _ownerImportSchemaReady = false;
+  bool _shopProfileSchemaReady = false;
+  Future<void> ensureShopProfileSchema() async {
+    if (_shopProfileSchemaReady) return;
+    try {
+      await client.from('shops').select('id,contact_name,postal_code').limit(1);
+    } on PostgrestException catch (error) {
+      if (['42703', 'PGRST204'].contains(error.code)) {
+        throw StateError('SHOP_PROFILE_MIGRATION_REQUIRED');
+      }
+      rethrow;
+    }
+    _shopProfileSchemaReady = true;
+  }
+
+  Future<LedgerSnapshot> ledgerSnapshot() => _ledgerSnapshot();
+  Future<LedgerReceipt> sendLedger(LedgerCommand command) =>
+      _sendLedger(command);
+  Future<List<SettlementDay>> settlementSnapshot() => _settlementSnapshot();
+  Future<SettlementDay> sendSettlement(SettlementCommand command) =>
+      _sendSettlement(command);
 
   Future<void> ensureOwnerImportSchema() async {
     if (_ownerImportSchemaReady) return;
@@ -68,6 +93,7 @@ class CloudService {
 
   Future<Shop> saveShop(Shop shop) async {
     await ensureOwnerImportSchema();
+    await ensureShopProfileSchema();
     final result = await client.rpc(
       'save_shop',
       params: {'p_shop': shop.toMap(), 'p_expected_version': shop.version},
@@ -75,6 +101,9 @@ class CloudService {
     final row = Map<String, dynamic>.from(result as Map);
     if (!row.containsKey('maps_url')) {
       throw StateError('OWNER_IMPORT_MIGRATION_REQUIRED');
+    }
+    if (!row.containsKey('contact_name') || !row.containsKey('postal_code')) {
+      throw StateError('SHOP_PROFILE_MIGRATION_REQUIRED');
     }
     return Shop.fromMap(row);
   }
@@ -102,6 +131,26 @@ class CloudService {
         .select()
         .single();
     return DeliveryStop.fromMap(row);
+  }
+
+  Future<List<DeliveryStop>> saveRouteOrder(RouteOrderCommand command) async {
+    try {
+      final result = await client.rpc(
+        'save_route_order',
+        params: {'p_payload': command.toMap()},
+      );
+      return (result as List)
+          .map(
+            (row) =>
+                DeliveryStop.fromMap(Map<String, dynamic>.from(row as Map)),
+          )
+          .toList();
+    } on PostgrestException catch (error) {
+      if (error.code == 'PGRST202' || error.code == '42883') {
+        throw StateError('ROUTE_ORDER_MIGRATION_REQUIRED');
+      }
+      rethrow;
+    }
   }
 
   Future<DeliveryStop> updateVisit(PendingVisit visit) async {

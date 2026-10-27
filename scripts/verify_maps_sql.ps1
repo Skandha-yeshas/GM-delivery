@@ -1,3 +1,4 @@
+param([string]$TestFile = 'supabase\tests\maps_link_delivery.sql')
 $ErrorActionPreference = 'Stop'
 $workspacePath = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $clusterPath = Join-Path $workspacePath ('.tooling\pg-test-' + [guid]::NewGuid().ToString('N').Substring(0,8))
@@ -22,8 +23,8 @@ try {
         Start-Sleep -Milliseconds 100
     }
     if (-not $ready) { throw "Disposable PostgreSQL did not start. Check $clusterPath\server-errors.log" }
-    & $sqlTool -X -h 127.0.0.1 -p $testPort -U gm_test -d postgres -v ON_ERROR_STOP=1 -f (Join-Path $workspacePath 'supabase\tests\maps_link_delivery.sql')
-    if ($LASTEXITCODE -ne 0) { throw 'Maps-link SQL checks failed.' }
+    & $sqlTool -X -h 127.0.0.1 -p $testPort -U gm_test -d postgres -v ON_ERROR_STOP=1 -f (Join-Path $workspacePath $TestFile)
+    if ($LASTEXITCODE -ne 0) { throw 'SQL checks failed.' }
 } finally {
     if ($serverProcess) {
         # This cluster contains disposable test data only. Immediate shutdown

@@ -4,11 +4,17 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
 import 'package:uuid/uuid.dart';
+import 'package:supabase_flutter/supabase_flutter.dart' show PostgrestException;
 import '../data/cloud_service.dart';
 import '../data/local_store.dart';
 import '../domain/models.dart';
 import '../domain/maps_location.dart';
 import '../domain/shop_import.dart';
+import '../domain/ledger.dart';
+import '../domain/settlement.dart';
+import '../domain/route_order.dart';
+part 'collection_controller.dart';
+part 'settlement_controller.dart';
 
 class DeliveryController extends ChangeNotifier {
   DeliveryController({
@@ -26,8 +32,20 @@ class DeliveryController extends ChangeNotifier {
   List<Shop> shops = [];
   List<DeliveryStop> stops = [];
   List<PendingVisit> pending = [];
+  List<LedgerEntry> ledger = [];
+  List<CreditBalance> creditBalances = [];
+  List<PendingLedger> pendingLedger = [];
+  List<SettlementDay> settlements = [];
+  List<PendingSettlement> pendingSettlements = [];
+  String? settlementSyncError;
+  List<LedgerEntry>? _ledgerProjection;
+  final Map<String, CreditBalance> _balanceProjection = {};
+  Set<String> _ledgerIds = {};
+  String? ledgerSyncError;
   bool busy = false;
   Completer<void>? _idle;
+  Completer<void>? _phoneIdle;
+  bool _phoneWriting = false, _refreshRequested = false;
   String? syncError;
   DateTime? lastSynced;
 
@@ -35,8 +53,22 @@ class DeliveryController extends ChangeNotifier {
   bool get isOwner => profile?.role == UserRole.owner;
   List<AppProfile> get drivers =>
       profiles.where((p) => p.role == UserRole.driver).toList();
-  Set<String> get pendingStopIds => pending.map((p) => p.stopId).toSet();
-  Future<void> get whenIdle => _idle?.future ?? Future<void>.value();
+  Set<String> get pendingStopIds => {
+    ...pending.map((p) => p.stopId),
+    ...pendingLedger.map((p) => p.command.stopId).whereType<String>(),
+  };
+  int get pendingCount =>
+      pending.length + pendingLedger.length + pendingSettlements.length;
+  Future<void> get whenIdle async {
+    // A phone save can request another sync while the first one is finishing.
+    // Account retirement must also wait for that follow-up work.
+    while (busy || _phoneWriting) {
+      await Future.wait<void>([
+        _idle?.future ?? Future<void>.value(),
+        _phoneIdle?.future ?? Future<void>.value(),
+      ]);
+    }
+  }
 
   Future<void> initialize() async {
     await photoDirectory.create(recursive: true);
@@ -75,10 +107,21 @@ class DeliveryController extends ChangeNotifier {
     notifyListeners();
   }
 
+  // Keep protected ChangeNotifier calls inside the notifier subclass.
+  void _notifyLocalChange() => notifyListeners();
+
   Future<void> reloadLocal() async {
     shops = await store.shops();
     stops = await store.stops();
     pending = await store.pendingVisits();
+    ledger = await store.ledgerEntries();
+    creditBalances = await store.balances();
+    pendingLedger = await store.ledgerQueue();
+    settlements = await store.settlementDays();
+    pendingSettlements = await store.settlementQueue();
+    _ledgerProjection = null;
+    _balanceProjection.clear();
+    _ledgerIds = ledger.map((e) => e.id).toSet();
   }
 
   Future<void> _exclusive(Future<void> Function() operation) async {
@@ -93,6 +136,7 @@ class DeliveryController extends ChangeNotifier {
       busy = false;
       _idle!.complete();
       notifyListeners();
+      _startRequestedSync();
     }
   }
 
@@ -101,6 +145,8 @@ class DeliveryController extends ChangeNotifier {
     await _exclusive(() async {
       if (!shared) return;
       syncError = null;
+      ledgerSyncError = null;
+      settlementSyncError = null;
       try {
         for (final visit in await store.pendingVisits()) {
           // The operation ID is durable: a retry after a lost response is idempotent.
@@ -108,9 +154,11 @@ class DeliveryController extends ChangeNotifier {
             final result = await cloud!.updateVisit(visit);
             await store.acknowledgeVisit(visit, result);
           } catch (error) {
-            syncError ??= errorText(error);
+            syncError ??= ledgerError(error);
           }
         }
+        await _syncLedgerQueue();
+        await _syncSettlementQueue();
         final snapshot = await cloud!.snapshot();
         profiles = snapshot.profiles;
         profile = profiles.where((p) => p.id == accountId).firstOrNull;
@@ -144,6 +192,22 @@ class DeliveryController extends ChangeNotifier {
           cachedShops.add(shop.withPhoto(shop.photoPath, localPath));
         }
         await store.replaceSnapshot(cachedShops, snapshot.stops);
+        try {
+          final financial = await cloud!.ledgerSnapshot();
+          await store.replaceLedgerSnapshot(
+            financial.entries,
+            financial.balances,
+          );
+        } catch (error) {
+          ledgerSyncError = ledgerError(error);
+        }
+        try {
+          await store.replaceSettlementSnapshot(
+            await cloud!.settlementSnapshot(),
+          );
+        } catch (error) {
+          settlementSyncError = settlementError(error);
+        }
         await store.setting(
           'profiles',
           jsonEncode(profiles.map((p) => p.toMap()).toList()),
@@ -158,6 +222,13 @@ class DeliveryController extends ChangeNotifier {
 
   Future<void> saveShop(Shop shop, {String? pickedPhoto}) async {
     _requireOwner();
+    if (shop.contactName.length > 200 ||
+        (shop.postalCode.isNotEmpty &&
+            !RegExp(r'^[1-9][0-9]{5}$').hasMatch(shop.postalCode))) {
+      throw ArgumentError(
+        'Enter a contact name up to 200 characters and a valid six-digit PIN code, or leave them empty.',
+      );
+    }
     if (shop.name.trim().isEmpty || shop.area.trim().isEmpty) {
       throw ArgumentError('Enter the shop name and area.');
     }
@@ -170,6 +241,10 @@ class DeliveryController extends ChangeNotifier {
     }
     if (shop.mapsUrl.isNotEmpty) googleMapsUri(shop.mapsUrl);
     await _exclusive(() async {
+      if (shared) {
+        await cloud!.ensureOwnerImportSchema();
+        await cloud!.ensureShopProfileSchema();
+      }
       String? localPath = shop.localPhotoPath;
       String? remotePath = shop.photoPath;
       if (pickedPhoto != null) {
@@ -195,10 +270,18 @@ class DeliveryController extends ChangeNotifier {
     final failures = <int, String>{};
     await _exclusive(() async {
       // Refresh the owner's directory before comparing an Excel file to it.
+      if (shared) await cloud!.ensureShopProfileSchema();
       // Failure stops the import; a stale directory must not cause duplicates.
       final existing = shared
           ? (await cloud!.snapshot()).shops
           : await store.shops();
+      if (shared && rows.any((row) => row.openingBalancePaise != null)) {
+        final financial = await cloud!.ledgerSnapshot();
+        await store.replaceLedgerSnapshot(
+          financial.entries,
+          financial.balances,
+        );
+      }
       final keys = existing.map(shopImportKey).toSet();
       final ids = existing.map((s) => s.id).toSet();
       if (shared) await cloud!.ensureOwnerImportSchema();
@@ -210,6 +293,22 @@ class DeliveryController extends ChangeNotifier {
         } else if (keys.contains(shopImportKey(shop)) ||
             ids.contains(shop.id)) {
           skipped++;
+          if (row.openingBalancePaise != null) {
+            final existingShop =
+                existing
+                    .where(
+                      (s) =>
+                          shopImportKey(s) == shopImportKey(shop) ||
+                          s.id == shop.id,
+                    )
+                    .firstOrNull ??
+                shop;
+            try {
+              await _importOpening(existingShop, row.openingBalancePaise!);
+            } catch (error) {
+              failures[row.number] = ledgerError(error);
+            }
+          }
         } else if (stoppedBecause != null) {
           failures[row.number] =
               'Not imported. Fix the earlier error and retry this file.';
@@ -217,6 +316,9 @@ class DeliveryController extends ChangeNotifier {
           try {
             final result = shared ? await cloud!.saveImportedShop(shop) : shop;
             await store.saveShop(result);
+            if (row.openingBalancePaise != null) {
+              await _importOpening(result, row.openingBalancePaise!);
+            }
             keys.add(shopImportKey(shop));
             ids.add(shop.id);
             saved++;
@@ -228,11 +330,17 @@ class DeliveryController extends ChangeNotifier {
         onProgress?.call(i + 1, rows.length);
       }
     });
+    if (shared && pendingLedger.isNotEmpty) unawaited(refresh());
     return ShopImportResult(saved, skipped, failures);
   }
 
   Future<void> addStop(Shop shop, DateTime date, String driverId) async {
     _requireOwner();
+    if (isSettlementLocked(driverId, dateKey(date))) {
+      throw StateError(
+        'Reopen this day’s settlement before adding deliveries.',
+      );
+    }
     if (!shop.readyForDelivery) {
       throw StateError(
         'Add a Google Maps link or verify this shop’s entrance location before assigning it.',
@@ -246,7 +354,9 @@ class DeliveryController extends ChangeNotifier {
       throw StateError('Select a delivery person.');
     }
     await _exclusive(() async {
-      final today = stops.where((s) => s.date == day).toList();
+      final today = stops
+          .where((s) => s.date == day && s.driverId == driverId)
+          .toList();
       final order =
           today.fold<int>(0, (max, s) => s.order > max ? s.order : max) + 1;
       final stop = DeliveryStop(
@@ -261,11 +371,47 @@ class DeliveryController extends ChangeNotifier {
     });
   }
 
+  Future<void> saveRouteOrder(RouteOrderCommand command) async {
+    _requireOwner();
+    final arranged = command.arrange();
+    await _exclusive(() async {
+      if (!drivers.any((d) => d.id == command.driverId)) {
+        throw StateError('Select a delivery person.');
+      }
+      if (isSettlementLocked(command.driverId, command.date)) {
+        throw StateError(
+          'Reopen this day’s settlement before changing the route.',
+        );
+      }
+      final current = stops
+          .where(
+            (s) => s.driverId == command.driverId && s.date == command.date,
+          )
+          .toList();
+      if (!command.matches(current)) throw StateError('ROUTE_CHANGED');
+      if (current.any((s) => pendingStopIds.contains(s.id))) {
+        throw StateError(
+          'Sync pending delivery and collection records before changing this route.',
+        );
+      }
+      final ordered = shared ? await cloud!.saveRouteOrder(command) : arranged;
+      await store.saveRouteOrder(ordered, expected: shared ? null : command);
+    });
+  }
+
   Future<void> recordVisit(
     DeliveryStop stop,
     VisitStatus status, {
     String reason = '',
   }) async {
+    if (status == VisitStatus.delivered &&
+        !projectedLedger.any(
+          (e) =>
+              e.command.stopId == stop.id &&
+              [LedgerKind.bill, LedgerKind.payment].contains(e.command.kind),
+        )) {
+      throw StateError('Use the collection form to mark this stop delivered.');
+    }
     if (status == VisitStatus.failed && reason.trim().isEmpty) {
       throw ArgumentError('Enter why the delivery could not be completed.');
     }
@@ -275,7 +421,7 @@ class DeliveryController extends ChangeNotifier {
     if (pendingStopIds.contains(stop.id)) {
       throw StateError('Sync the pending result first.');
     }
-    await _exclusive(() async {
+    await _saveOnPhone(() async {
       final updated = stop.withStatus(
         status,
         status == VisitStatus.failed ? reason.trim() : '',
@@ -295,11 +441,17 @@ class DeliveryController extends ChangeNotifier {
         );
       }
     });
-    if (shared) await refresh();
+    _requestSync();
   }
 
   Future<void> removeStop(DeliveryStop stop) async {
     _requireOwner();
+    if (ledger.any((e) => e.command.stopId == stop.id) ||
+        pendingLedger.any((e) => e.command.stopId == stop.id)) {
+      throw StateError(
+        'Deliveries with ledger records must be kept for audit.',
+      );
+    }
     if (stop.status != VisitStatus.pending ||
         pendingStopIds.contains(stop.id)) {
       throw StateError(
@@ -318,6 +470,11 @@ class DeliveryController extends ChangeNotifier {
 
   Future<void> discardPending() async {
     if (!shared) return;
+    if (pending.any((p) => p.status == VisitStatus.delivered)) {
+      throw StateError(
+        'Complete the collection form for older delivered results before resolving other visit conflicts.',
+      );
+    }
     // Verify that the server is reachable BEFORE discarding local results.
     final snapshot = await cloud!.snapshot();
     await _exclusive(() async {
@@ -349,11 +506,23 @@ class DeliveryController extends ChangeNotifier {
                 s.date == dateKey(date) && (isOwner || s.driverId == accountId),
           )
           .toList()
-        ..sort((a, b) => a.order.compareTo(b.order));
+        ..sort(compareRouteStops);
 }
 
 String errorText(Object error) {
   final raw = error.toString();
+  if (raw.contains('ROUTE_ORDER_MIGRATION_REQUIRED')) {
+    return 'Run supabase/migrations/20261023_delivery_order.sql in Supabase, then retry saving the route.';
+  }
+  if (raw.contains('ROUTE_CHANGED')) {
+    return 'This route changed on another phone. Reset the draft, sync and review the updated stops.';
+  }
+  if (raw.contains('SETTLEMENT_LOCKED')) {
+    return 'Reopen this day’s settlement before changing deliveries.';
+  }
+  if (raw.contains('SHOP_PROFILE_MIGRATION_REQUIRED')) {
+    return 'Run supabase/migrations/20261020_shop_profiles.sql in Supabase, then retry saving shop details.';
+  }
   if (error is FormatException) return error.message;
   if (raw.contains('OWNER_IMPORT_MIGRATION_REQUIRED')) {
     return 'The owner import database update is needed. Run the SQL in supabase/migrations/20261014_owner_import.sql, then retry.';

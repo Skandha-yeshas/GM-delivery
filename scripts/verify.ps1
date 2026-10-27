@@ -33,6 +33,8 @@ if ($Preview) {
 & $flutterTool pub get
 if ($LASTEXITCODE -ne 0) { throw 'Dependency resolution failed.' }
 if ($FixStyle) {
+    & $dartTool format lib test
+    if ($LASTEXITCODE -ne 0) { throw 'Formatting failed.' }
     & $dartTool fix --apply --code=curly_braces_in_flow_control_structures
     if ($LASTEXITCODE -ne 0) { throw 'Style fixes failed.' }
 }

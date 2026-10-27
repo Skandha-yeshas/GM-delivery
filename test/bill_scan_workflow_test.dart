@@ -7,6 +7,8 @@ import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:gm_delivery/application/delivery_controller.dart';
 import 'package:gm_delivery/data/bill_scan_service.dart';
 import 'package:gm_delivery/data/local_store.dart';
+import 'package:gm_delivery/data/shop_location_service.dart';
+import 'package:gm_delivery/presentation/shop_form.dart';
 import 'package:gm_delivery/domain/models.dart';
 import 'package:gm_delivery/presentation/bill_scan_screen.dart';
 
@@ -33,6 +35,22 @@ class FakeScanner implements BillScanService {
     reads++;
     return text;
   }
+}
+
+class ScanTestGps implements ShopLocationService {
+  int captures = 0;
+  @override
+  Future<ShopGpsFix> capture() async {
+    captures++;
+    return const ShopGpsFix(12.3, 77.5, 8);
+  }
+
+  @override
+  Future<ShopAddress?> addressFor(ShopGpsFix fix) async => const ShopAddress(
+    address: '14 Market Road',
+    area: 'City Market',
+    postalCode: '560001',
+  );
 }
 
 Future<void> settleScan(WidgetTester tester) async {
@@ -113,22 +131,133 @@ void main() {
     });
   }
 
-  Future<void> mount(WidgetTester tester) async {
+  Future<void> mount(
+    WidgetTester tester, {
+    ShopLocationService? gps,
+    double scale = 1,
+    DateTime? serviceDate,
+  }) async {
     tester.view.physicalSize = const Size(390, 844);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
     await tester.pumpWidget(
       MaterialApp(
+        builder: (context, child) => MediaQuery(
+          data: MediaQuery.of(
+            context,
+          ).copyWith(textScaler: TextScaler.linear(scale)),
+          child: child!,
+        ),
         home: BillScanScreen(
           controller: controller,
-          date: date,
+          date: serviceDate ?? date,
           scanner: scanner,
+          locationService: gps,
         ),
       ),
     );
     await settleScan(tester);
   }
+
+  Future<void> reveal(WidgetTester tester, Finder target) async {
+    await tester.scrollUntilVisible(
+      target,
+      240,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.ensureVisible(target);
+    await tester.pumpAndSettle();
+  }
+
+  testWidgets(
+    'direct GPS for an unknown shop opens a reviewable form and never dispatches on capture',
+    (tester) async {
+      await tester.runAsync(setup);
+      final gps = ScanTestGps();
+      try {
+        scanner.text =
+            'G.M. Enterprises\nBuyer (Bill to): Omega Paper House\nGrand Total 500';
+        await mount(tester, gps: gps);
+        await tester.runAsync(() => tester.tap(find.text('Scan whole bill')));
+        await settleScan(tester);
+        await reveal(tester, find.byKey(const Key('dispatch-direct-gps')));
+        await tester.runAsync(
+          () => tester.tap(find.byKey(const Key('dispatch-direct-gps'))),
+        );
+        await tester.pumpAndSettle();
+        expect(find.byType(ShopForm), findsOneWidget);
+        expect(gps.captures, 1);
+        final address = find.descendant(
+          of: find.byKey(const ValueKey('shop-field-Address')),
+          matching: find.byType(TextField),
+        );
+        await tester.ensureVisible(address);
+        await tester.pumpAndSettle();
+        expect(
+          tester.widget<TextField>(address).controller!.text,
+          '14 Market Road',
+        );
+        expect(controller.stops, isEmpty);
+        expect(controller.shops, hasLength(2));
+        await tester.tap(find.text('Cancel'));
+        await tester.pumpAndSettle();
+        expect(controller.stops, isEmpty);
+        expect(controller.shops, hasLength(2));
+        expect(tester.takeException(), isNull);
+      } finally {
+        await cleanup(tester);
+      }
+    },
+  );
+
+  testWidgets(
+    'already scheduled shops and absent drivers cannot be dispatched again',
+    (tester) async {
+      await tester.runAsync(() async {
+        await setup();
+        await controller.addStop(
+          controller.shopFor('alpha')!,
+          date,
+          'local-driver',
+        );
+      });
+      try {
+        await mount(tester);
+        await tester.runAsync(() => tester.tap(find.text('Scan whole bill')));
+        await settleScan(tester);
+        await reveal(
+          tester,
+          find.text('This shop is already on this delivery list.'),
+        );
+        expect(find.text('Scheduled for dispatch'), findsOneWidget);
+        expect(find.byKey(const Key('confirm-dispatch')), findsNothing);
+        expect(controller.stops, hasLength(1));
+        await tester.pumpWidget(const SizedBox.shrink());
+        controller.profiles.removeWhere((p) => p.role == UserRole.driver);
+        await mount(
+          tester,
+          scale: 1.4,
+          serviceDate: date.add(const Duration(days: 1)),
+        );
+        await settleScan(tester);
+        await reveal(tester, find.byKey(const Key('confirm-dispatch')));
+        expect(
+          find.text('Create a delivery account before assigning this stop.'),
+          findsOneWidget,
+        );
+        expect(
+          tester
+              .widget<FilledButton>(find.byKey(const Key('confirm-dispatch')))
+              .onPressed,
+          isNull,
+        );
+        expect(tester.takeException(), isNull);
+      } finally {
+        await cleanup(tester);
+      }
+    },
+  );
 
   testWidgets(
     'whole-bill scan shows only shop name, finds GPS and requires confirmation to assign',
@@ -149,14 +278,15 @@ void main() {
           scrollable: find.byType(Scrollable).first,
         );
         await tester.scrollUntilVisible(
-          find.text('GPS: 12.300000, 77.500000'),
+          find.text('GPS entrance saved and verified.'),
           250,
           scrollable: find.byType(Scrollable).first,
         );
-        expect(find.text('GPS: 12.300000, 77.500000'), findsOneWidget);
-        expect(find.text('Shop found'), findsOneWidget);
+        expect(find.text('GPS entrance saved and verified.'), findsOneWidget);
+        expect(find.text('Matched with Registered Shop'), findsOneWidget);
+        await reveal(tester, find.byKey(const Key('confirm-dispatch')));
         await tester.runAsync(() async {
-          await tester.tap(find.text('Confirm shop & add delivery'));
+          await tester.tap(find.byKey(const Key('confirm-dispatch')));
           await controller.whenIdle;
           await Future<void>.delayed(const Duration(milliseconds: 100));
         });
@@ -164,7 +294,7 @@ void main() {
         expect(controller.stops.single.shopId, 'alpha');
         expect(controller.stops.single.date, '2026-10-15');
         expect(controller.stops.single.driverId, 'local-driver');
-        expect(find.text('Scan next shop'), findsOneWidget);
+        expect(find.text('Scan Next Bill'), findsOneWidget);
         expect(tester.takeException(), isNull);
       } finally {
         await cleanup(tester);
@@ -201,13 +331,11 @@ void main() {
           find.textContaining('Add a Google Maps link or capture'),
           findsOneWidget,
         );
+        await reveal(tester, find.byKey(const Key('confirm-dispatch')));
         expect(
           tester
               .widget<FilledButton>(
-                find.widgetWithText(
-                  FilledButton,
-                  'Confirm shop & add delivery',
-                ),
+                find.widgetWithText(FilledButton, 'Confirm Dispatch'),
               )
               .onPressed,
           isNull,
@@ -265,8 +393,9 @@ void main() {
         expect(find.textContaining('GPS:'), findsNothing);
         expect(find.text('View location in Maps'), findsOneWidget);
         expect(controller.stops, isEmpty);
+        await reveal(tester, find.byKey(const Key('confirm-dispatch')));
         await tester.runAsync(() async {
-          await tester.tap(find.text('Confirm shop & add delivery'));
+          await tester.tap(find.byKey(const Key('confirm-dispatch')));
           await controller.whenIdle;
           await Future<void>.delayed(const Duration(milliseconds: 100));
         });
@@ -338,15 +467,30 @@ void main() {
         );
         await tester.tap(find.text('Add new shop'));
         await tester.pumpAndSettle();
-        final prefilled = find.byWidgetPredicate(
-          (w) => w is TextField && w.decoration?.labelText == 'Shop name',
+        final prefilled = find.descendant(
+          of: find.byKey(const ValueKey('shop-field-Shop name')),
+          matching: find.byType(TextField),
         );
         expect(
           tester.widget<TextField>(prefilled).controller!.text,
           'Omega Paper House',
         );
+        for (final entry in {
+          'Proprietor / contact person': 'Rajesh',
+          'Contact number': '9876543210',
+          'Address': '18 Main Road',
+          'PIN code': '560001',
+        }.entries) {
+          final field = find.descendant(
+            of: find.byKey(ValueKey('shop-field-${entry.key}')),
+            matching: find.byType(TextField),
+          );
+          await tester.ensureVisible(field);
+          await tester.pumpAndSettle();
+          await tester.enterText(field, entry.value);
+        }
         await tester.runAsync(() async {
-          await tester.tap(find.text('Save'));
+          await tester.tap(find.byKey(const Key('save-shop')));
           await controller.whenIdle;
         });
         await settleScan(tester);
